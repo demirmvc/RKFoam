@@ -1,0 +1,7 @@
+{
+    "files.associations": {
+        "pimpleFoam.C": "cpp",
+        "RKFoam.C": "cpp",
+        "RKHelperFunctions.C": "cpp"
+    }
+}

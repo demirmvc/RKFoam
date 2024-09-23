@@ -1,146 +1,63 @@
-/*---------------------------------------------------------------------------*\
-  =========                 |
-  \\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox
-   \\    /   O peration     |
-    \\  /    A nd           | www.openfoam.com
-     \\/     M anipulation  |
--------------------------------------------------------------------------------
-    Copyright (C) 2011-2017 OpenFOAM Foundation
-    Copyright (C) 2019 OpenCFD Ltd.
--------------------------------------------------------------------------------
-Application
-    RKFoam.C
-
-
-Description
-    Transient solver for incompressible, turbulent flow of Newtonian fluids
-    on a moving mesh.
-
-    \heading Solver details
-    The solver uses the PIMPLE (merged PISO-SIMPLE) algorithm to solve the
-    continuity equation:
-
-        \f[
-            \div \vec{U} = 0
-        \f]
-
-    and momentum equation:
-
-        \f[
-            \ddt{\vec{U}} + \div \left( \vec{U} \vec{U} \right) - \div \gvec{R}
-          = - \grad p + \vec{S}_U
-        \f]
-
-    Where:
-    \vartable
-        \vec{U} | Velocity
-        p       | Pressure
-        \vec{R} | Stress tensor
-        \vec{S}_U | Momentum source
-    \endvartable
-
-    Sub-models include:
-    - turbulence modelling, i.e. laminar, RAS or LES
-    - run-time selectable MRF and finite volume options, e.g. explicit porosity
-
-    \heading Required fields
-    \plaintable
-        U       | Velocity [m/s]
-        p       | Kinematic pressure, p/rho [m2/s2]
-        \<turbulence fields\> | As required by user selection
-    \endplaintable
-
-Note
-   The motion frequency of this solver can be influenced by the presence
-   of "updateControl" and "updateInterval" in the dynamicMeshDict.
-
-\*---------------------------------------------------------------------------*/
-
 #include "fvCFD.H"
-#include "dynamicFvMesh.H"
 #include "singlePhaseTransportModel.H"
 #include "turbulentTransportModel.H"
 #include "pimpleControl.H"
-#include "CorrectPhi.H"
 #include "fvOptions.H"
-#include "localEulerDdtScheme.H"
-#include "fvcSmooth.H"
+#include "OFstream.H"
+#include "RKHelperFunctions.H"  // Include before main
 
 // * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
 
 int main(int argc, char *argv[])
 {
-    #include "postProcess.H"
-
-    #include "addCheckCaseOptions.H"
-    #include "setRootCaseLists.H"
+    #include "setRootCase.H"
     #include "createTime.H"
-    #include "createDynamicFvMesh.H"
+    #include "createMesh.H"
+    #include "createControl.H"
+    #include "createTimeControls.H"
     #include "initContinuityErrs.H"
-    #include "createDyMControls.H"
     #include "createFields.H"
-    #include "createUfIfPresent.H"
-    #include "CourantNo.H"
-    #include "setInitialDeltaT.H"
+    #include "readRKSchemeSettings.H"
+    #include "createFvOptions.H"
 
     turbulence->validate();
 
-    if (!LTS)
-    {
-        #include "CourantNo.H"
-        #include "setInitialDeltaT.H"
-    }
-
-    // * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
-
-    Info<< "\nStarting time loop\n" << endl;
+    Info << "\nStarting time loop\n" << endl;
 
     while (runTime.run())
     {
-        #include "readDyMControls.H"
+        #include "readTimeControls.H"
+        #include "CourantNo.H"
+        #include "setDeltaT.H"
 
-        if (LTS)
+        runTime++;
+
+        Info << "Time = " << runTime.timeName() << nl << endl;
+
+        // Initialize U0 and phi0 at the beginning of each time step
+        volVectorField U0(U.name(), U);
+
+        surfaceScalarField phi0(phi.name(), phi);
+
+        // Runge-Kutta stages loop
+        for (label stage = 0; stage < nStages; stage++)
         {
-            #include "setRDeltaT.H"
-        }
-        else
-        {
-            #include "CourantNo.H"
-            #include "setDeltaT.H"
+            #include "solveRKStage.H"
         }
 
-        ++runTime;
-
-        Info<< "Time = " << runTime.timeName() << nl << endl;
-
-        // --- Pressure-velocity PIMPLE corrector loop
-        while (pimple.loop())
-        {
-            
-            #include "UEqn.H"
-
-            // --- Pressure corrector loop
-            while (pimple.correct())
-            {
-                #include "pEqn.H"
-            }
-
-            if (pimple.turbCorr())
-            {
-                laminarTransport.correct();
-                turbulence->correct();
-            }
-        }
+        // Update fields after all stages
+        #include "updateFields.H"
 
         runTime.write();
 
-        runTime.printExecutionTime(Info);
+        Info << "ExecutionTime = " << runTime.elapsedCpuTime() << " s"
+             << "  ClockTime = " << runTime.elapsedClockTime() << " s"
+             << nl << endl;
     }
 
-    Info<< "End\n" << endl;
+    Info << "End\n" << endl;
 
     return 0;
 }
-
 
 // ************************************************************************* //
